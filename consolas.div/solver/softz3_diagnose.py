@@ -166,7 +166,7 @@ class SoftSolverDiagnose(SoftSolver):
             
         if len(self.results) !=0:    
             result = self.results[0]
-            self._last_model = result.weight
+            self._last_model = result.model
             self._last_result = True
             return self.results[0].weight
         else:

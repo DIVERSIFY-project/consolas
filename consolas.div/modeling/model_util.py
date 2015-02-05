@@ -1,6 +1,8 @@
 from z3 import *
 
 downcasefirst = lambda s: s[:1].lower() + s[1:] if s else ''
+_Or = lambda x: next(iter(x)) if len(x)==1 else Or(x)
+_And = lambda x: next(iter(x)) if len(x)==1 else And(x)
 
 class ClassNotDefined:
     def __init__(self, name):
@@ -16,6 +18,7 @@ class ClassDiagram:
         self.superclass = dict()
         self.ref = dict()
         self.multiref = dict()
+        self.manref = set()
         
         
     def define_class(self, class_name, supper_class = []):
@@ -27,12 +30,14 @@ class ClassDiagram:
             self.classes.add(class_name)
             self.superclass[class_name] = supper_class
             
-    def define_ref(self, name, fromclass, toclass):
+    def define_ref(self, name, fromclass, toclass, mandatory=False):
         if not (fromclass in self.classes) :
             raise ClassNotDefined(fromclass)
         if not (toclass in self.classes) :
             raise ClassNotDefined(toclass)
         self.ref[name] = (fromclass, toclass)
+        if mandatory: 
+            self.manref.add(name)
         
         
         
@@ -41,7 +46,10 @@ class ModelSMT:
         self.cd = class_diagram
         self.maxinst = dict()  # max number of instances for each type
         self.inst_by_type = dict()
+        
         self.nullinst = None
+        self.typeof = None
+        self.alive = None
         
         self.types = dict()
         self.insts = dict()
@@ -50,8 +58,13 @@ class ModelSMT:
         self.indirect_insts = None
         self.leaf_classes = None
         self.children_leaf_classes = None
+        self.declared_type = None
         
         self.hard_const = []
+    
+    
+    def hard(self, const, comment):
+        self.hard_const.append( (const, comment) )
         
     def generate(self):
         
@@ -76,18 +89,20 @@ class ModelSMT:
         
         CompType, comp_types = EnumSort("CompType", ["NullType"]+class_names)
         inst_names = []
-        direct_type = dict()
+        declared_type = dict()
         indirect_insts = dict([(c, set()) for c in class_names])
         for cname in class_names:
             inum = self.maxinst.get(cname, 0)
             cname_lower = downcasefirst(cname)
             local_inst_names = ["%s%02d" % (cname_lower, i) for i in range(0, inum) ]
             for i in local_inst_names:
-                direct_type[i] = cname
+                declared_type[i] = cname
                 for c in set([cname]) | insupc[cname]:
                     indirect_insts[c].add(i) 
             inst_names = inst_names + local_inst_names
         self.indirect_insts = indirect_insts   
+        self.declared_type = declared_type
+        inst_names_set = set(inst_names)
             
         CompInst, comp_insts = EnumSort("CompInst", ['null'] + inst_names)
         nullinst = comp_insts[0]
@@ -98,26 +113,69 @@ class ModelSMT:
         
         typeof = Function('typeof', CompInst, CompType)
         alive = Function('alive', CompInst, BoolSort())   
+        self.typeof = typeof
+        self.alive = alive
         
-        hard = self.hard_const
-        hard.append(typeof(nullinst) == NullType)
-        hard.append(alive(nullinst) == False)
+        self.hard(typeof(nullinst) == NullType, "null-type")
+        self.hard(Not(alive(nullinst)), "null-not-alive")
         
         #constraints for types
         for instn, inst in self.insts.iteritems():
             if instn == 'null':
                 continue
-            leaves = clsleafch[direct_type[instn]]
-            if len(leaves)==1:
-                hard.append(typeof(inst)==self.types[next(iter(leaves))])
-            else:
-                hard.append( Or([typeof(inst)==self.types[t] for t in leaves ]) )
-        
+            leaves = clsleafch[declared_type[instn]]
+            self.hard( _Or([typeof(inst)==self.types[t] for t in leaves | set(['NullType']) ]),
+                       "one-of-the-leaf-types" )
+        self.hard(_And([ Not(alive(i)) == (typeof(i)==NullType) for i in self.insts.itervalues()]),
+                  "not-alive-no-type")
+        #declare functions for references
         refs = [Function(fn, CompInst, CompInst) for fn in self.cd.ref.iterkeys()]
         for fun in refs: self.funcs[str(fun)] = fun
         
+        #constraints for references
+        for funname, (fromclass, toclass) in self.cd.ref.iteritems():
+            fun = self.funcs[funname]
+            type_overlap = lambda x, y : clsleafch[x] & clsleafch[y]
+            from_insts = set([x for x in inst_names if type_overlap(fromclass, declared_type[x])])
+            #to_insts = [x for x in inst_names if type_overlap(toclass, declared_type[x])]
+            from_leaf_cls = clsleafch[fromclass]
+            to_leaf_cls = clsleafch[toclass]
+            
+            self.hard( 
+                      _And([ fun(self.insts[x])==nullinst for x in inst_names_set - from_insts ]),
+                      "ref-not-domain" )
+            self.hard( _And([
+                              _Or([typeof(fun(self.insts[x]))==self.types[y] for y in to_leaf_cls | set(['NullType'])])
+                              for x in from_insts
+                              ]),
+                      "ref-right-codomain" )
+            self.hard( _And([
+                             Implies(
+                                     Not(self.gen_is_typeof(x, fromclass)),
+                                     fun(self.insts[x])==nullinst
+                                     )
+                             for x in from_insts if not(fromclass in insupc[declared_type[x]])
+                             ]), "ref-not-proper-domain")
+            if funname in self.cd.manref:
+                self.hard( 
+                          _And([
+                                Implies(
+                                        And(alive(self.insts[x]), self.gen_is_typeof(x, fromclass)), 
+                                        alive(fun(self.insts[x]))
+                                        ) 
+                                for x in from_insts]), 
+                          'mandatory_ref'
+                          )
+            self.hard( _And([Implies(Not(alive(self.insts[x])), fun(self.insts[x])==nullinst) for x in from_insts]), 'mandatory_ref')
     
-
+    def gen_is_typeof(self, inst, cls):
+        declared_type = self.declared_type[str(inst)]
+        if cls in set([declared_type]) | self.indirect_super_class[declared_type]:
+            return True
+        possible = self.children_leaf_classes[self.declared_type[str(inst)]]
+        leaf_cls = self.children_leaf_classes[cls]
+        return _Or([self.typeof(self.insts[inst])==self.types[y] for y in possible & leaf_cls])        
+            
 class QuickExpr:
     def __init__(self, alive, typeof, nullinst, nulltype):
         self.alive = alive
