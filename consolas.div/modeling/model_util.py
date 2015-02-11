@@ -85,6 +85,7 @@ class ModelSMT:
         clsleafch = dict()
         for cn in class_names:
             clsleafch[cn] = set([x for x in self.leaf_classes if cn in set([x])|insupc[x]])
+        clsleafch['NullType'] = set(['NullType'])
         self.children_leaf_classes = clsleafch
         
         CompType, comp_types = EnumSort("CompType", ["NullType"]+class_names)
@@ -100,7 +101,8 @@ class ModelSMT:
                 for c in set([cname]) | insupc[cname]:
                     indirect_insts[c].add(i) 
             inst_names = inst_names + local_inst_names
-        self.indirect_insts = indirect_insts   
+        self.indirect_insts = indirect_insts
+        declared_type['null'] = 'NullType'   
         self.declared_type = declared_type
         inst_names_set = set(inst_names)
             
@@ -175,6 +177,34 @@ class ModelSMT:
         possible = self.children_leaf_classes[self.declared_type[str(inst)]]
         leaf_cls = self.children_leaf_classes[cls]
         return _Or([self.typeof(self.insts[inst])==self.types[y] for y in possible & leaf_cls])        
+    
+    def gen_type_dep(self, fun, fromcls, tocls):
+        result = []
+        fromleaves = set([])
+        for cls in fromcls:
+            fromleaves = fromleaves | self.children_leaf_classes[cls]
+            
+        toleaves = set([])
+        for cls in tocls:
+            toleaves = toleaves | self.children_leaf_classes[cls]
+        
+        for inst in self.insts.iterkeys():
+            #only if inst is possible to be a instance of one of the from classes
+            print inst
+            print self.declared_type[inst]
+            if self.children_leaf_classes[self.declared_type[inst]] & fromleaves:
+                cst = Implies(
+                              _Or([self.typeof(self.insts[inst])==self.types[cls] for cls in fromleaves]),
+                              _Or([self.typeof(self.funcs[fun](self.insts[inst]))==self.types[cls] for cls in toleaves])
+                              )
+                result.append(cst)
+        return result
+    
+    def get_potential_instances(self, cls):
+        return set([x for x in self.insts 
+                if self.children_leaf_classes[self.declared_type[x]] & self.children_leaf_classes[cls]
+                ])
+    
             
 class QuickExpr:
     def __init__(self, alive, typeof, nullinst, nulltype):

@@ -19,7 +19,7 @@ class Test(unittest.TestCase):
         #x.v
         print fun
 
-    def testZ3Ms(self):
+    def ttestZ3Ms(self):
         solver = SoftSolverMsOpt()
         x = Int('x')
         y = Int('y')
@@ -32,13 +32,34 @@ class Test(unittest.TestCase):
         solver.init_solver()
         solver.search()
         print solver.model()
-
+    
+    def ttestAlive(self):
+        
+        solver = Optimize()
+        Inst, (n, x, y, z) = EnumSort('Inst', ['n', 'x', 'y', 'z'])
+        
+        alive = Function('alive', Inst, BoolSort())
+        solver.add(Not(alive(n)))        
+        solver.add(Implies(alive(x), alive(y)))
+        
+        for i in [n, x, y, z]:
+            solver.add_soft(Not(alive(i)), 1)
+        
+        #solver.add(alive(x))
+        solver.add_soft(alive(x), 5)
+        
+        print solver.check().r
+        print solver.model()
+        
     def testClassDiagram(self):
         cd = ClassDiagram('SmartGH')
         cd.define_class("Vm")
         cd.define_class("Deployable")
         
         cd.define_class("Web", ['Deployable'])
+        
+        cd.define_class("EC2", ['Vm'])
+        cd.define_class("Azure", ['Vm'])
         
         cd.define_class("Hopper", ['Deployable'])        
         cd.define_class("FastHopper",["Hopper"])
@@ -59,6 +80,7 @@ class Test(unittest.TestCase):
         smt.maxinst["Vm"] = 2
         smt.maxinst["Hopper"] = 2
         smt.maxinst["Redis"] = 2
+        smt.maxinst["CarHopper"] = 1
         #smt.maxinst["SlowCH"] = 2
         
         smt.generate()
@@ -76,19 +98,28 @@ class Test(unittest.TestCase):
         #solver = SoftSolverDiagnose()
         
         for cst, comment in smt.hard_const:
-            #if comment != "ref-right-codomain":
                 solver.add_hard(cst)
         
         for i in smt.insts.itervalues():
-            if str(i)!='hopper00' and str(i)!='null':
+            if str(i)!='carHopper00' and str(i)!='null':
                 solver.add_soft(Not(smt.alive(i)), 10)
+                
+        for i in smt.insts:
+            if i != 'null':
+                solver.add_soft(smt.typeof(smt.insts[i])!=smt.types['Azure'], 1)
             
-        solver.add_soft(smt.alive(smt.insts['hopper00']), 30)
+        solver.add_soft(smt.alive(smt.insts['carHopper00']), 30)
+        solver.add_soft(smt.typeof(smt.insts['carHopper00'])==smt.types['FastCH'], 50)
+        for cst in smt.gen_type_dep("db", ["CarHopper"], ["LocalRedis"]):
+            solver.add_soft(cst, 100)
+            
+        for cst in smt.gen_type_dep('deploy', ['FastHopper', 'FastCH'], ['Azure']):
+            solver.add_soft(cst, 100)
         
         #solver.add_hard(smt.alive(smt.insts['hopper00']))
         #solver.add_hard(Not(smt.alive(smt.insts['hopper00'])))
         #solver.add_soft(smt.alive(smt.insts['hopper01']), 100)
-        solver.add_soft(smt.typeof(smt.insts['redis00'])==smt.types['LocalRedis'],30)
+        #solver.add_soft(smt.typeof(smt.insts['redis00'])==smt.types['PaaSRedis'],30)
         #solver.add_hard(smt.alive(smt))
         
         solver.init_solver()
