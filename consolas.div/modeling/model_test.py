@@ -54,36 +54,51 @@ class Test(unittest.TestCase):
     def testClassDiagram(self):
         cd = ClassDiagram('SmartGH')
         cd.define_class("Vm")
+        cd.define_class("EC2", ['Vm'])
+        cd.define_class("Azure", ['Vm'])
+                        
         cd.define_class("Deployable")
         
         cd.define_class("Web", ['Deployable'])
-        
-        cd.define_class("EC2", ['Vm'])
-        cd.define_class("Azure", ['Vm'])
-        
+                
         cd.define_class("Hopper", ['Deployable'])        
-        cd.define_class("FastHopper",["Hopper"])
-        cd.define_class("SlowHopper",["Hopper"])
-        cd.define_class("CarHopper",["Hopper"])
-        cd.define_class("FastCH",["CarHopper"])
-        cd.define_class("SlowCH",["CarHopper"])
+        cd.define_class("CarHopper", ["Hopper"])
+        cd.define_class("FastCH", ["CarHopper"])
+        cd.define_class("SlowCH", ["CarHopper"])
+        cd.define_class("FootHopper", ["Hopper"])
+        cd.define_class("BasicHopper", ["Hopper"])
         
         cd.define_class("Redis")
         cd.define_class("LocalRedis", ["Redis","Deployable"])
         cd.define_class("PaaSRedis", ["Redis"])
         
+        cd.define_class('Sensor', ['Deployable'])
+        cd.define_class('NoiseSensor', ['Sensor'])
+        cd.define_class('PollutionSensor', ['Sensor'])
+        cd.define_class('TrafficSensor', ['Sensor'])
+        
+        
+        
         cd.define_ref('deploy', 'Deployable', 'Vm', True)
         cd.define_ref('db', 'Hopper', 'Redis', True)
+        cd.define_ref('hp', 'Web', 'Hopper', True)
+        cd.define_ref('sdb', 'Sensor', 'Redis', True)
         
+        cd.define_attr_int('vmem', 'Vm', 1, 10)
+        cd.define_attr_int('rmem', 'Deployable', 1, 5)
         
         smt = ModelSMT(cd)
-        smt.maxinst["Vm"] = 2
+        smt.maxinst["Vm"] = 4
         smt.maxinst["Hopper"] = 2
         smt.maxinst["Redis"] = 2
         smt.maxinst["CarHopper"] = 1
+        smt.maxinst["Web"] = 1
+        smt.maxinst['Sensor']=2
         #smt.maxinst["SlowCH"] = 2
         
         smt.generate()
+        
+        print smt.hard_const
         
         print smt.types
         print smt.insts
@@ -101,26 +116,56 @@ class Test(unittest.TestCase):
                 solver.add_hard(cst)
         
         for i in smt.insts.itervalues():
-            if str(i)!='carHopper00' and str(i)!='null':
+            if str(i)!='web00' and str(i)!='null':
                 solver.add_soft(Not(smt.alive(i)), 10)
                 
         for i in smt.insts:
             if i != 'null':
                 solver.add_soft(smt.typeof(smt.insts[i])!=smt.types['Azure'], 1)
             
-        solver.add_soft(smt.alive(smt.insts['carHopper00']), 30)
-        solver.add_soft(smt.typeof(smt.insts['carHopper00'])==smt.types['FastCH'], 50)
+        solver.add_soft(smt.alive(smt.insts['web00']), 1000)
+        #solver.add_soft(smt.typeof(smt.insts['carHopper00'])==smt.types['FastCH'], 50)
         for cst in smt.gen_type_dep("db", ["CarHopper"], ["LocalRedis"]):
             solver.add_soft(cst, 100)
             
-        for cst in smt.gen_type_dep('deploy', ['FastHopper', 'FastCH'], ['Azure']):
+        for cst in smt.gen_type_dep('deploy', ['FootHopper', 'FastCH'], ['Azure']):
             solver.add_soft(cst, 100)
         
-        #solver.add_hard(smt.alive(smt.insts['hopper00']))
-        #solver.add_hard(Not(smt.alive(smt.insts['hopper00'])))
-        #solver.add_soft(smt.alive(smt.insts['hopper01']), 100)
-        #solver.add_soft(smt.typeof(smt.insts['redis00'])==smt.types['PaaSRedis'],30)
-        #solver.add_hard(smt.alive(smt))
+        x = smt.gen_const_inst()
+        y = smt.gen_const_inst()
+        db = smt.funcs['db']
+        sdb = smt.funcs['sdb']
+        vmem = smt.funcs['vmem']
+        rmem = smt.funcs['rmem']
+        deploy = smt.funcs['deploy']
+        
+        mustfast = smt.gen_propagate([(x, smt.types['Hopper'])], 
+                                             Or(smt.typeof(x)==smt.types['FastCH'], Not(smt.alive(x)))
+                                             )
+        print mustfast
+        for cst in mustfast:
+            solver.add_soft(cst, 1000)
+        
+        solver.add_hard(
+                        smt.gen_forall([(x, smt.types['Hopper'])],
+                                       Implies(
+                                               smt.typeof(x)==smt.types['FastCH'],
+                                               smt.gen_exist(
+                                                             [(y, smt.types['Sensor'])], 
+                                                             db(x) == sdb(y)
+                                                        )
+                                           )
+                                       )
+                        )
+                        
+        
+        solver.add_hard(smt.gen_if_alive_type(x,smt.types['Hopper'], rmem(x)==5))
+        solver.add_hard(smt.gen_if_alive_type(x,smt.types['Sensor'], rmem(x)==5))
+        solver.add_hard(smt.gen_if_alive_type(x,smt.types['LocalRedis'], rmem(x)==2))
+        solver.add_hard(smt.gen_if_alive_type(x, smt.types['Vm'], vmem(x)==9))
+        
+        
+        solver.add_hard(And(smt.gen_if_alive_type(y, smt.types['Vm'], vmem(y) >= smt.gen_sum(x, smt.types['Deployable'], rmem, deploy(x)==y))))
         
         solver.init_solver()
         #print solver.soft
@@ -160,6 +205,9 @@ class Test(unittest.TestCase):
         print smt.indirect_super_class
         print smt.indirect_insts
         print smt.children_leaf_classes
+    
+
+        
     
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testClassDiagram']

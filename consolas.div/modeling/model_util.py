@@ -1,8 +1,11 @@
 from z3 import *
 
+import itertools
+
 downcasefirst = lambda s: s[:1].lower() + s[1:] if s else ''
 _Or = lambda x: next(iter(x)) if len(x)==1 else Or(x)
 _And = lambda x: next(iter(x)) if len(x)==1 else And(x)
+_A_STRANGE_INT = 47731477
 
 class ClassNotDefined:
     def __init__(self, name):
@@ -10,6 +13,10 @@ class ClassNotDefined:
         
     def __repr__(self):
         return "<%s>" % self.name
+
+class DataType:
+    INT = 1
+    BOOL = 2
 
 class ClassDiagram:
     def __init__(self, name):
@@ -19,6 +26,7 @@ class ClassDiagram:
         self.ref = dict()
         self.multiref = dict()
         self.manref = set()
+        self.attr = dict()
         
         
     def define_class(self, class_name, supper_class = []):
@@ -39,7 +47,11 @@ class ClassDiagram:
         if mandatory: 
             self.manref.add(name)
         
+    def define_attr_int(self, name, cls, min = 0, max = 1):
+        self.attr[name] = (cls, min, max)
         
+    def define_attr_bool(self, name, cls):
+        self.attr[name] = (cls)    
         
 class ModelSMT:
     def __init__(self, class_diagram):
@@ -51,6 +63,9 @@ class ModelSMT:
         self.typeof = None
         self.alive = None
         
+        self.CompType = None
+        self.CompInst = None
+        
         self.types = dict()
         self.insts = dict()
         self.funcs = dict()
@@ -61,7 +76,8 @@ class ModelSMT:
         self.declared_type = None
         
         self.hard_const = []
-    
+        
+        self.const_count = 1000
     
     def hard(self, const, comment):
         self.hard_const.append( (const, comment) )
@@ -89,6 +105,7 @@ class ModelSMT:
         self.children_leaf_classes = clsleafch
         
         CompType, comp_types = EnumSort("CompType", ["NullType"]+class_names)
+        self.CompType = CompType
         inst_names = []
         declared_type = dict()
         indirect_insts = dict([(c, set()) for c in class_names])
@@ -107,6 +124,7 @@ class ModelSMT:
         inst_names_set = set(inst_names)
             
         CompInst, comp_insts = EnumSort("CompInst", ['null'] + inst_names)
+        self.CompInst = CompInst
         nullinst = comp_insts[0]
         NullType = comp_types[0]
         
@@ -130,6 +148,7 @@ class ModelSMT:
                        "one-of-the-leaf-types" )
         self.hard(_And([ Not(alive(i)) == (typeof(i)==NullType) for i in self.insts.itervalues()]),
                   "not-alive-no-type")
+        
         #declare functions for references
         refs = [Function(fn, CompInst, CompInst) for fn in self.cd.ref.iterkeys()]
         for fun in refs: self.funcs[str(fun)] = fun
@@ -170,6 +189,51 @@ class ModelSMT:
                           )
             self.hard( _And([Implies(Not(alive(self.insts[x])), fun(self.insts[x])==nullinst) for x in from_insts]), 'mandatory_ref')
     
+        #end of for
+        
+        #declare functions for attributes
+        for attr, dec in self.cd.attr.iteritems():
+            cls = dec[0]
+            relevs = self.get_potential_instances(cls)
+            irrelevs = set(self.insts.keys()) - relevs
+            if len(dec) == 1: #boolean
+                fun = Function(attr, CompInst, BoolSort())
+                self.funcs[attr] = fun
+                self.hard(
+                          _And([Not(fun(self.insts[x])) for x in irrelevs]),
+                          "Irrelevant Bool attribute"
+                          )
+                self.hard(
+                          _And([Or(
+                                    self.gen_is_typeof(x, cls),
+                                    Not(fun(self.insts[x]))
+                                  )
+                                for x in relevs
+                                ]),
+                          "Relevant by not proper type of Bool attribute"
+                          )
+            if len(dec) == 3: #int
+                (cls, min, max)=dec
+                fun = Function(attr, CompInst, IntSort())
+                self.funcs[attr]=fun
+                self.hard(_And([fun(x)==_A_STRANGE_INT
+                                for x in [self.insts[inst] for inst in irrelevs]
+                                ]
+                               ),
+                          "Irrelalevant int attributes"
+                          )
+                item = self.gen_const_inst()    
+                self.hard(
+                          _And([If(
+                                  self.gen_is_typeof(str(x), cls),
+                                  And(fun(x)>=min, fun(x)<=max),
+                                  fun(x) == _A_STRANGE_INT
+                                  )
+                                for x in [self.insts[inst] for inst in relevs]
+                                ]
+                               ),
+                          "Relevant int attributes"
+                          )
     def gen_is_typeof(self, inst, cls):
         declared_type = self.declared_type[str(inst)]
         if cls in set([declared_type]) | self.indirect_super_class[declared_type]:
@@ -204,6 +268,45 @@ class ModelSMT:
         return set([x for x in self.insts 
                 if self.children_leaf_classes[self.declared_type[x]] & self.children_leaf_classes[cls]
                 ])
+    
+    def gen_const_inst(self):
+        x = Const('inst%05d'%self.const_count, self.CompInst)
+        self.const_count += 1
+        return x
+    
+    def gen_propagate(self, inst_types, expr):
+        pool = [self.get_potential_instances(str(cls)) for (inst, cls) in inst_types]
+        result = []
+        for relevant in itertools.product(*pool):
+            tosubs = []
+            for i, (inst, types) in enumerate(inst_types):
+                tosubs.append((inst, self.insts[relevant[i]]))
+            print "Here is the one to sub: %s" % tosubs
+            result.append(substitute(expr, *tosubs))    
+        return result
+    
+    def gen_propagate_single(self, inst, type, expr):
+        return self.gen_propagate([(inst, type)], expr)
+    
+    def gen_if_alive_type(self, inst, type, expr):
+        leaves = [self.types[x] for x in self.children_leaf_classes[str(type)]]
+        new_expr = Implies(
+                           _Or([self.typeof(inst)==cls for cls in leaves]),
+                           expr
+                           )
+        return self.gen_propagate_single(inst, type, new_expr)
+    def gen_forall(self, inst_types, expr):
+        return _And(self.gen_propagate(inst_types, expr))
+    
+    def gen_exist(self, inst_types, expr):
+        return _Or(self.gen_propagate(inst_types, expr))
+    
+    def gen_sum(self, inst, type, attr, condition):
+        new_expr = If(condition, attr(inst), 0)
+        return Sum(self.gen_propagate_single(inst, type, new_expr))
+    
+    
+    
     
             
 class QuickExpr:
