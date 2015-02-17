@@ -9,6 +9,7 @@ from softz3_msopt import *
 from softz3_opt import *
 from softz3_diagnose import *
 from model_painter import *
+from model_cloudml import *
 from time import clock
 
 class Test(unittest.TestCase):
@@ -87,7 +88,7 @@ class Test(unittest.TestCase):
         smt.maxinst["PaaSRedis"] = 2
         smt.maxinst["LocalRedis"] = 2
         #smt.maxinst["CarHopper"] = 1
-        smt.maxinst["Web"] = 3
+        smt.maxinst["Web"] = 4
         smt.maxinst['Sensor']=2
         smt.maxinst['Lb'] = 1
         #smt.maxinst["SlowCH"] = 2
@@ -131,6 +132,15 @@ class Test(unittest.TestCase):
         cdriver.add_monitored('alive', (x, If(alive(x), 10, 20)))
         cdriver.add_monitored('db', 10)
         cdriver.add_monitored('sdb', 10)
+        
+        cloudml = CloudML(smt)
+        cloudml.attr = ['port']
+        cloudml.host = [('deploy', 'ubuntuReq', 'ubuntuPrv')]
+        cloudml.relation = [('db', 'redisReq', 'redisPrv'), ('sdb', 'redisReq', 'redisPrv'), ('hp', 'hopperReq', 'hopperPrv')]
+        cloudml.rev_relation = [('lb', 'lbReq', 'lbPrv')]
+        cloudml.vm = ['Vm']
+        cloudml.internal = ['Deployable']
+        cloudml.external = ['PaaSRedis']
         
         solver = SoftSolverMsOpt()
         for cst, comment in smt.hard_const:
@@ -192,8 +202,8 @@ class Test(unittest.TestCase):
         
         print solver.get_broken()
         print solver.get_broken_weight()
-        
-
+        cloudml.meval = solver.model().eval
+        print cloudml.generate_instances()
         painter.make_graph()
         
 
@@ -210,7 +220,10 @@ class Test(unittest.TestCase):
                 for i in smt.insts.itervalues():
                     if str(i).startswith('web') and str(solver.model().eval(alive(i)))=='True':
                         print 'Port of %s: %s' % (i, solver.model().eval(port(i)))
-                painter.eval = solver.model().eval
+                meval = solver.model().eval
+                painter.eval = meval
+                cloudml.meval = meval
+                print cloudml.generate_instances()
                 painter.make_graph()
             except:
                 print "Unexpected error:", sys.exc_info()[0]
