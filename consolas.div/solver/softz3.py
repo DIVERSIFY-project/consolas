@@ -18,6 +18,7 @@ class SoftSolver():
         self._weight_var = []
         self._last_result = None
         self._last_model = None
+        self._before_clock = None
         
     def add_soft(self, cst, wt):
         self.soft.append((cst, wt))  
@@ -37,6 +38,11 @@ class SoftSolver():
     
     def print_state_time(self):
         None#print 'Result2: %s, Time: %.2f' % (self.last_sat(), clock())
+    
+    def search_with_timing(self):
+        self._before_clock = clock()
+        self.search()
+        return (self._last_result, clock()-self._before_clock)
         
     def search(self):
         None

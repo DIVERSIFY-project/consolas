@@ -51,7 +51,7 @@ class ClassDiagram:
         self.attr[name] = (cls, min, max)
         
     def define_attr_bool(self, name, cls):
-        self.attr[name] = (cls)    
+        self.attr[name] = (cls, True)    
         
 class ModelSMT:
     def __init__(self, class_diagram):
@@ -172,7 +172,7 @@ class ModelSMT:
                       "ref-right-codomain" )
             self.hard( _And([
                              Implies(
-                                     Not(self.gen_is_typeof(x, fromclass)),
+                                     Not(self.g_istypeof(x, fromclass)),
                                      fun(self.insts[x])==nullinst
                                      )
                              for x in from_insts if not(fromclass in insupc[declared_type[x]])
@@ -181,7 +181,7 @@ class ModelSMT:
                 self.hard( 
                           _And([
                                 Implies(
-                                        And(alive(self.insts[x]), self.gen_is_typeof(x, fromclass)), 
+                                        And(alive(self.insts[x]), self.g_istypeof(x, fromclass)), 
                                         alive(fun(self.insts[x]))
                                         ) 
                                 for x in from_insts]), 
@@ -196,7 +196,7 @@ class ModelSMT:
             cls = dec[0]
             relevs = self.get_potential_instances(cls)
             irrelevs = set(self.insts.keys()) - relevs
-            if len(dec) == 1: #boolean
+            if len(dec) == 2: #boolean
                 fun = Function(attr, CompInst, BoolSort())
                 self.funcs[attr] = fun
                 self.hard(
@@ -205,7 +205,7 @@ class ModelSMT:
                           )
                 self.hard(
                           _And([Or(
-                                    self.gen_is_typeof(x, cls),
+                                    self.g_istypeof(x, cls),
                                     Not(fun(self.insts[x]))
                                   )
                                 for x in relevs
@@ -225,7 +225,7 @@ class ModelSMT:
                 item = self.gen_const_inst()    
                 self.hard(
                           _And([If(
-                                  self.gen_is_typeof(str(x), cls),
+                                  self.g_istypeof(str(x), cls),
                                   And(fun(x)>=min, fun(x)<=max),
                                   fun(x) == _A_STRANGE_INT
                                   )
@@ -234,7 +234,7 @@ class ModelSMT:
                                ),
                           "Relevant int attributes"
                           )
-    def gen_is_typeof(self, inst, cls):
+    def g_istypeof(self, inst, cls):
         declared_type = self.declared_type[str(inst)]
         if cls in set([declared_type]) | self.indirect_super_class[declared_type]:
             return True
@@ -242,7 +242,7 @@ class ModelSMT:
         leaf_cls = self.children_leaf_classes[cls]
         return _Or([self.typeof(self.insts[inst])==self.types[y] for y in possible & leaf_cls])        
     
-    def gen_type_dep(self, fun, fromcls, tocls):
+    def g_type_dep(self, fun, fromcls, tocls):
         result = []
         fromleaves = set([])
         for cls in fromcls:
@@ -274,7 +274,7 @@ class ModelSMT:
         self.const_count += 1
         return x
     
-    def gen_propagate(self, inst_types, expr):
+    def g_prpg_multi(self, inst_types, expr):
         pool = [self.get_potential_instances(str(cls)) for (inst, cls) in inst_types]
         result = []
         for relevant in itertools.product(*pool):
@@ -285,29 +285,86 @@ class ModelSMT:
             result.append(substitute(expr, *tosubs))    
         return result
     
-    def gen_propagate_single(self, inst, type, expr):
-        return self.gen_propagate([(inst, type)], expr)
+    def g_prpg(self, inst, type, expr):
+        return self.g_prpg_multi([(inst, type)], expr)
     
-    def gen_if_alive_type(self, inst, type, expr):
+    def g_ifalive(self, inst, type, expr):
         leaves = [self.types[x] for x in self.children_leaf_classes[str(type)]]
         new_expr = Implies(
-                           _Or([self.typeof(inst)==cls for cls in leaves]),
-                           expr
-                           )
-        return self.gen_propagate_single(inst, type, new_expr)
-    def gen_forall(self, inst_types, expr):
-        return _And(self.gen_propagate(inst_types, expr))
+                           True,#self.alive(inst),
+                           Implies(
+                                   _Or([self.typeof(inst)==cls for cls in leaves]),
+                                   expr
+                                   )
+                          ) 
+        return self.g_prpg(inst, type, new_expr)
+    def g_forall(self, inst_types, expr):
+        return _And(self.g_prpg_multi(inst_types, expr))
     
-    def gen_exist(self, inst_types, expr):
-        return _Or(self.gen_propagate(inst_types, expr))
+    def g_exist(self, inst_types, expr):
+        return _Or(self.g_prpg_multi(inst_types, expr))
     
-    def gen_sum(self, inst, type, attr, condition):
+    def g_sum(self, inst, type, attr, condition):
         new_expr = If(condition, attr(inst), 0)
-        return Sum(self.gen_propagate_single(inst, type, new_expr))
+        return Sum(self.g_prpg(inst, type, new_expr))
     
+    def g_ifalive_exists(self, ifinst, iftype, ifexp, exinst, extype, expr):
+        new_expr = self.g_exist([(exinst, extype)], And(self.typeof(exinst)==extype, expr))
+        return self.g_ifalive(ifinst, iftype, Implies(ifexp, new_expr))
+   
+   
+   
+   
+class ChangeDriver():
+    def __init__(self, smt, fixed_soft = []):
+        self.smt = smt
+        self.cd = smt.cd
+        self.fixed_soft = [x for x in fixed_soft]
+        self.monitored = []
+        self.new_soft = []
     
+    def init_fixed_soft(self, solver):
+        self.fixed_soft = [x for x in solver.soft]
+        
+    def add_fixed_soft(self, cst, weight):
+        self.fixed_soft.append((cst, weight)) 
+        
+    def add_new_soft(self, cst, weight):
+        self.new_soft.append((cst, weight))
     
+    def add_monitored(self, property, weight):
+        self.monitored.append((property, weight))
     
+    def start_over(self, solver):
+        meval = solver.model().eval
+        self.new_soft = []
+        for property, weight in self.monitored:
+            fun = None
+            relev = None
+            if property == 'alive':
+                fun = self.smt.alive
+                relev = set(self.smt.insts.keys()) - set(['null'])
+            else:
+                fun = self.smt.funcs[property]
+                cls = None
+                if property in self.cd.attr:
+                    cls = self.cd.attr[property][0]
+                elif property in self.cd.ref:
+                    cls = self.cd.ref[property][0]
+                relev = self.smt.get_potential_instances(cls)
+            for inst in relev:
+                ins = self.smt.insts[inst]
+                real_weight = weight
+                if isinstance(weight, tuple):
+                    v, expr = weight
+                    new_expr = substitute(expr, (v, ins))
+                    x = meval(new_expr)
+                    #print "=====>%s:%s:%s"%(ins, new_expr, x)
+                    real_weight = int(str(x))
+                self.add_new_soft( fun(ins) == meval(fun(ins)), real_weight )
+                
+        solver.soft = self.fixed_soft + self.new_soft
+        
             
 class QuickExpr:
     def __init__(self, alive, typeof, nullinst, nulltype):

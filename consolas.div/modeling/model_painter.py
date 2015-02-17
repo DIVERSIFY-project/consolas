@@ -1,7 +1,7 @@
 '''
 Created on 12 Nov 2013
 
-@author: fafey
+@author: Hui Song
 '''
 
 from z3 import *
