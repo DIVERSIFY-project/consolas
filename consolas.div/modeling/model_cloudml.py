@@ -33,7 +33,7 @@ class CloudML:
             for attr in self.attr:
                 xattr = self.smt.funcs[attr]
                 if type in self.cd.attr[attr]:
-                    properties.append('(%s : %s)' % (attr, meval(xattr(xinst))))
+                    properties.append('(\'%s\' : \'%s\')' % (attr, meval(xattr(xinst))))
             if len(properties)!=0:
                 line = '%s { properties: %s}' %(line, ", ".join(properties))
             lines.append(line)
@@ -66,8 +66,12 @@ class CloudML:
                 stype = meval(smt.typeof(second))
                 lines.append('connect %s.%s to %s.%s typed %s2%s' % (first, fromport, second, toport, ftype, stype))
                     
+        sorted_lines = []
+        for prefix in ['vm', 'internal', 'external', 'connect', 'host']:
+            sorted_lines += [x for x in lines if x.startswith(prefix)]
+            sorted_lines += ['']
                 
-        return 'instances{ \n%s\n}' % '\n'.join('\t'+line for line in lines)        
+        return 'instances{ \n%s\n}' % '\n'.join('\t'+line for line in sorted_lines)        
             
     def get_category(self, type):
         supertypes = self.smt.indirect_super_class[type] | set([type])

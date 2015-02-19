@@ -1,224 +1,242 @@
-from softz3_opt import *
-from softz3_msopt import *
-from z3 import *
 from model_util import *
-from painter import *
-from time import clock
-from summer_func import *
-from random import choice
+from softz3 import *
+from softz3_msopt import *
+from model_painter import *
+from model_cloudml import *
+from smartgh_util import *
 
-numGh = 10
-numEnc = 10
-numStr = 8
-numVm = 4
+cd = ClassDiagram('SmartGH')
 
-nameGh = ['gh%d'%(i) for i in range(1,numGh+1)]
-nameEnc = ['enc%d'%(i) for i in range(1, numEnc+1)]
-nameStr = ['str%d'%(i) for i in range(1, numStr+1)]
-nameVm = ['vm%d'%(i) for i in range(1, numVm+1)]
+cd.define_class("Vm")
+cd.define_class("EC2", ['Vm'])
+cd.define_class("OpenStackLarge", ['Vm'])
+cd.define_class('OpenStackHuge', ['Vm'])
+                
+cd.define_class("Deployable")
 
-CompType, (NullType, GhUni, GhStatic, GhDriving, GhWorkOut, GoogMap, 
-           EncBasic, EncAllService, EncPollution, EncTraffic, EncNoise,
-           StoreApp, StorePltf, StorePltf2, 
-           EC2, EC2Free, Azure) = \
-    EnumSort('CompType', [
-           'NullType', 'GhUni', 'GhStatic', 'GhDriving', 'GhWorkOut', 'GoogMap', 
-           'EncBasic', 'EncAllService', 'EncPollution', 'EncTraffic', 'EncNoise',
-           'StoreApp', 'StorePltf', 'StorePltf2', 
-           'EC2', 'EC2Free', 'Azure'
-        ])
-    
-CompInst, comps = EnumSort('CompInst', ['null'] + nameGh + nameEnc + nameStr + nameVm)
-
-curr = 0
-nullinst = comps[curr]
-curr += 1
-instGh = comps[curr:curr + numGh]
-curr += numGh
-instEnc = comps[curr:curr+numEnc]
-curr += numEnc
-instStr = comps[curr:curr+numStr]
-curr += numStr
-instVm = comps[curr:curr+numVm]
-
-alive = Function('alive', CompInst, BoolSort())
-typeof = Function('typeof', CompInst, CompType)
-
-host = Function('host', CompInst, CompInst)
-dGhEnc = Function('dGhEnc', CompInst, CompInst)
-dEncStr = Function('dEncStr', CompInst, CompInst)
-mem = Function('mem', CompInst, IntSort())
-
-refs = [dGhEnc, host, dEncStr]
-
-rp = ResultPainter()
-rp.vars = comps
-rp.types = [typeof]
-rp.refs = refs 
-rp.filters = [alive]
-rp.use_filters = True
-
-#icomp = Const('icomp', CompInst)
-#iicomp = Const('iicomp', CompInst)
-
-solver = SoftSolverMsOpt()
-quick = QuickExpr(alive, typeof, nullinst, NullType)
-
-
-solver.add_hard(typeof(nullinst) == NullType)
-solver.add_hard(alive(nullinst) == False)
-
-solver.add_hard(And([Or(alive(i), 
-                        And(typeof(i)==NullType, 
-                            dGhEnc(i)==nullinst, 
-                            dEncStr(i)==nullinst,
-                            host(i)==nullinst)) 
-                     for i in comps[1:] ]))
-
-for icomp in instGh:
-    solver.add_hard(quick.alter_types(icomp, [GhUni, GhStatic, GhDriving, GhWorkOut, GoogMap]))
-    solver.add_hard(quick.type_dep(icomp, dGhEnc, GhUni, [EncBasic, EncAllService]))
-    solver.add_hard(quick.type_dep(icomp, dGhEnc, GhStatic, [EncBasic]))
-    solver.add_hard(quick.type_dep(icomp, dGhEnc, GhDriving, [EncAllService, EncPollution, EncTraffic, EncNoise]))
-    solver.add_hard(quick.type_dep(icomp, dGhEnc, GhWorkOut,[EncAllService, EncPollution, EncNoise]))
-    solver.add_hard(quick.ref_to_null(icomp, dGhEnc, GoogMap))
-    solver.add_hard(Implies(And(alive(icomp), alive(dGhEnc(icomp)), alive(host(icomp)), alive(host(dGhEnc(icomp)))), 
-                            host(icomp)==host(dGhEnc(icomp))))
-    
-    
-    
-for icomp in instEnc + instStr + instVm:
-    solver.add_hard(dGhEnc(icomp)==nullinst) 
-    
-for icomp in instEnc:
-    solver.add_hard(quick.alter_types(icomp, [EncAllService, EncBasic, EncNoise, EncPollution, EncTraffic]))
-    solver.add_hard(quick.type_dep(icomp, dEncStr, 
-                                            EncAllService, 
-                                            [StoreApp]))
-    solver.add_hard(quick.type_dep(icomp, dEncStr, 
-                                            EncTraffic, 
-                                            [StoreApp, StorePltf2]))
-    solver.add_hard(quick.type_dep(icomp,dEncStr,EncNoise,[StoreApp,StorePltf]))
-    solver.add_hard(quick.type_dep_multiple(icomp, dEncStr, 
-                                            [EncBasic, EncPollution], 
-                                            [StoreApp, StorePltf, StorePltf2]))
-    
+cd.define_class("Web", ['Deployable'])
+cd.define_class("Lb", ['Deployable'])
         
-for icomp in instGh + instStr + instVm:
-    solver.add_hard(dEncStr(icomp)==nullinst)
-    
-    
-for icomp in instGh + instEnc + instStr:
-    solver.add_hard(quick.ref_to_null_multiple(icomp, host, [GoogMap, StorePltf, StorePltf2]))
-    solver.add_hard(quick.type_dep_multiple(icomp, host, 
-                                            [GhDriving, GhStatic, GhUni, GhWorkOut, EncAllService, EncBasic, EncNoise, EncPollution, EncTraffic, StoreApp], 
-                                            [EC2, EC2Free, Azure]))
-    solver.add_hard(mem(icomp)==0)
-    
-for icomp in instVm:
-    solver.add_hard(host(icomp)==nullinst)
-    
-for icomp in instStr:
-    solver.add_hard(quick.alter_types(icomp, [StoreApp, StorePltf, StorePltf2]))
-    solver.add_hard(quick.type_dep(icomp, host, StoreApp, [EC2]))
-    
-for icomp in instVm:
-    solver.add_hard(quick.alter_types(icomp, [EC2, EC2Free, Azure]))
-    solver.add_hard(quick.count(instGh+instEnc+instStr, icomp, host)<=mem(icomp))
-    solver.add_hard(Implies(typeof(icomp)==EC2, mem(icomp)==4))
-    solver.add_hard(Implies(typeof(icomp)==EC2Free, mem(icomp)==2))
-    solver.add_hard(Implies(typeof(icomp)==Azure, mem(icomp)==4))
-    
-    
-theone = Const('theone', CompInst)
-solver.add_hard(Or([And(theone==i, alive(theone)) for i in instGh]))
+cd.define_class("Hopper", ['Deployable'])        
+cd.define_class("CarHopper", ["Hopper"])
+cd.define_class("FastCH", ["CarHopper"])
+cd.define_class("NormalCH", ["CarHopper"])
+cd.define_class("FootHopper", ["Hopper"])
+cd.define_class("BasicHopper", ["Hopper"])
 
-#Context
-driving = Const('driving', BoolSort())
-pollution = Const('pollution', BoolSort())
-traffic = Const('traffic', BoolSort())
-fast = Const('fast', BoolSort())
-cheap = Const('cheap', BoolSort())
-private = Const('private', BoolSort())
-secure = Const('secure', BoolSort())
+cd.define_class("Redis")
+cd.define_class("LocalRedis", ["Redis","Deployable"])
+cd.define_class("PaaSRedis", ["Redis"])
+
+cd.define_class('Sensor', ['Deployable'])
+cd.define_class('NoiseSensor', ['Sensor'])
+cd.define_class('PollutionSensor', ['Sensor'])
+#cd.define_class('TrafficSensor', ['Sensor'])
+
+cd.define_ref('deploy', 'Deployable', 'Vm', True)
+cd.define_ref('db', 'Hopper', 'Redis', True)
+cd.define_ref('hp', 'Web', 'Hopper', True)
+cd.define_ref('sdb', 'Sensor', 'Redis', True)
+cd.define_ref('lb', 'Web', 'Lb', False)
+
+cd.define_attr_int('vmem', 'Vm', 1, 10)
+cd.define_attr_int('rmem', 'Deployable', 0, 5)
+cd.define_attr_int('port', 'Web', 8081, 8089)
+
+cd.define_attr_bool('fast', 'Web')
+cd.define_attr_bool('noise', 'Web')
+cd.define_attr_bool('pollution', 'Web')
+cd.define_attr_bool('cheap', 'Web')
 
 
-context = [driving, pollution, traffic, fast, cheap, private, secure]
+smt = ModelSMT(cd)
 
-solver.add_hard(Implies(driving, typeof(theone)==GhDriving))
-solver.add_hard(Implies(pollution, typeof(dGhEnc(theone))==EncPollution))
-solver.add_hard(Implies(traffic, 
-                        Or([typeof(dGhEnc(theone))==t 
-                             for t in [EncTraffic,EncAllService] ]
-                            )
-                        ))
-solver.add_hard(Implies(cheap,
-                        quick.cartesian_not_equal(
-                                                  [host(theone), host(dEncStr(dGhEnc(theone)))], 
-                                                  [EC2, Azure])
-                        ))
-solver.add_hard(Implies(cheap,
-                        typeof(dEncStr(dGhEnc(theone)))!=StorePltf))
-solver.add_hard(Implies(fast,
-                        Or(typeof(dGhEnc(theone))==EncBasic, 
-                           typeof(theone)==GoogMap)
-                        ))
-solver.add_hard(Implies(private, 
-                        quick.cartesian_not_equal([theone], [GhUni,GoogMap])))
-solver.add_hard(Implies(secure, And(typeof(theone)!=GoogMap, typeof(dEncStr(dGhEnc(theone)))!=StorePltf2)))
-
-for i in comps:
-    solver.add_soft(Not(alive(i)),1)
-    
+smt.maxinst["Vm"] = 3
+smt.maxinst["OpenStackHuge"] = 1
+smt.maxinst["FastCH"] = 1
+smt.maxinst['Hopper'] = 4
+smt.maxinst["PaaSRedis"] = 2
+smt.maxinst["LocalRedis"] = 3
+smt.maxinst["Web"] = 4
+smt.maxinst['Sensor']=3
+smt.maxinst['Lb'] = 1
 
 
+smt.generate()
 
-#functions
+#for cst, comment in smt.hard_const:
+#    print "%s: %s" %(cst, comment)
+
+#These variables are used only to shorthant the constraint definitions
+x = smt.gen_const_inst()
+y = smt.gen_const_inst()
+z = smt.gen_const_inst()
+db = smt.funcs['db']
+sdb = smt.funcs['sdb']
+hp = smt.funcs['hp']
+vmem = smt.funcs['vmem']
+rmem = smt.funcs['rmem']
+deploy = smt.funcs['deploy']
+OpenStackLarge = smt.types['OpenStackLarge']
+Hopper = smt.types['Hopper']
+FastCH = smt.types['FastCH']
+PaaSRedis = smt.types['PaaSRedis']
+Web = smt.types['Web']
+Sensor = smt.types['Sensor']
+Pollution = smt.types['PollutionSensor']
+Noise = smt.types['NoiseSensor']
+typeof = smt.typeof
+alive = smt.alive
+web = smt.insts['web00']
+web1 = smt.insts['web01']
+fast = smt.funcs['fast']
+pollution = smt.funcs['pollution']
+noise = smt.funcs['noise']
+port = smt.funcs['port']
+hopper00 = smt.insts['hopper00']
+hopper01 = smt.insts['hopper01']
+hopper02 = smt.insts['hopper02']
+hopper03 = smt.insts['hopper03']
+lb = smt.funcs['lb']
+EC2 = smt.types['EC2']
+OpenStackHuge = smt.types['OpenStackHuge']
+#shorthands end here
+
+
+#auxiliary objects to display the result (painter), monitor change (cdriver), 
+#and generate CloudML scripts
+
+painter = ModelPainter(smt)
+
+cdriver = ChangeDriver(smt)
+cdriver.add_monitored('deploy', 10)
+cdriver.add_monitored('alive', (x, If(alive(x), 1, 30)))
+cdriver.add_monitored('db', 10)
+cdriver.add_monitored('sdb', 10)
+
+cloudml = CloudML(smt)
+cloudml.attr = ['port']
+cloudml.host = [('deploy', 'ubuntuReq', 'ubuntuPrv')]
+cloudml.relation = [('db', 'redisReq', 'redisPrv'), ('sdb', 'redisReq', 'redisPrv'), ('hp', 'hopperReq', 'hopperPrv')]
+cloudml.rev_relation = [('lb', 'lbReq', 'webPrv')]
+cloudml.vm = ['Vm']
+cloudml.internal = ['Deployable']
+cloudml.external = ['PaaSRedis']
+#end of auxiliary
 
 '''
-convert the current topology into soft constraints, which means 
-starting from the configuration encoded in eval
+' Create the main solver, and put the meta-model-related constraints
+' into it
 '''
-def start_over_div(topology):
-    del solver.soft[:]
-    for i in comps[1:]:
-        if str(topology(alive(i)))=='False':
-            solver.add_soft(Not(alive(i)), 1)
-        else:
-            solver.add_soft(alive(i), 10)
-            solver.add_soft(typeof(i)==topology(typeof(i)), 1)
-            for r in refs:
-                if str(topology(r(i)))!='null':
-                    solver.add_soft(r(i)==topology(r(i)), 1)
-
-def shuffle(topology, target, num):   
-    alived = [x for x in target if str(topology(alive(x))) == 'True']
-    for i in range(0, num):
-        x = randint(0, len(alived)-2)
-        y = randint(x+1, len(alived)-1)
-        if str(topology(typeof(alived[x])==typeof(alived[y])))=='True':
-            solver.add_soft(typeof(alived[x])!=typeof(alived[y]), 10)
+solver = SoftSolverMsOpt()
+for cst, comment in smt.hard_const:
+        solver.add_hard(cst)
 
 
-def activate(topology, target=comps[1:], num=1, weight=10):
-    i = 0
-    j = 0
-    while(i < num and j<20):
-        j = j+1
-        x = choice(target)
-        if str(topology(alive(x)))=='False':
-            solver.add_soft(alive(x), weight)
-            i = i+1
 
-def start_over_adapt(topology):
-    del solver.soft[:]
-    for i in comps[1:]:
-        if str(topology(alive(i)))=='False':
-            solver.add_soft(Not(alive(i)), 5)
-        else:
-            solver.add_soft(alive(i), 4)
-            solver.add_soft(typeof(i)==topology(typeof(i)), 8)
-            for r in refs:
-                if str(topology(r(i)))!='null':
-                    solver.add_soft(r(i)==topology(r(i)), 2)       
+#Hate PaaSRedis, because we don't support it
+for cst in smt.g_prpg(x, PaaSRedis, typeof(x)!=PaaSRedis):
+    solver.add_soft(cst, 300)          
+#Hate EC2, because we don't support it, too
+for cst in smt.g_prpg(x, EC2, typeof(x)!=EC2):
+    solver.add_soft(cst, 100)
+#Hate OpenStackHuge as well, because it's huge    
+for cst in smt.g_prpg(x, OpenStackHuge, typeof(x)!=OpenStackHuge):
+    solver.add_soft(cst, 100)
+
+
+
+#At least one web by default    
+solver.add_soft(smt.alive(web), 1000)
+
+#CarHopper prefers LocalRedis
+for cst in smt.g_type_dep("db", ["CarHopper"], ["LocalRedis"]):
+    solver.add_soft(cst, 100)
+    #solver.add_hard(cst)     
+
+
+# distinguised hopper: each web
+#solver.add_hard(smt.g_forall([(x, Web), (y, Web)], Implies(And(hp(x)==hp(y), alive(hp(x))), x==y)))        
+
+# distinguised port
+solver.add_hard(smt.g_forall([(x, Web), (y, Web)], Implies(And([alive(x), alive(y), port(x)==port(y)]), x==y))) 
+# more than one web? call a load balance!
+solver.add_hard(smt.g_forall([(x, Web), (y, Web)], Implies(And([alive(x), alive(y), x!=y]), And(alive(lb(x)), alive(lb(y))))))       
+# Two hoppers cannot be deployed on the same node
+solver.add_hard(smt.g_forall([(x,Hopper), (y, Hopper)], Implies(And([alive(x), alive(y), deploy(x)==deploy(y)]), x==y)))
+#each hopper should be covered by a web
+exps = smt.g_ifalive_exists(x, Hopper, True, y, Web, hp(y)==x)
+print 'covered by web: %s' % exps
+solver.add_hard(And(exps))
+
+solver.add_hard(smt.g_ifalive(x, smt.types['FastCH'], smt.g_exist([(y, smt.types['Sensor'])], db(x)==sdb(y))))                
+expr = smt.g_ifalive(x,smt.types['Hopper'], rmem(x)==2)
+solver.add_hard(smt.g_ifalive(x, smt.types['Sensor'], rmem(x)==1))
+solver.add_hard(smt.g_ifalive(x, smt.types['LocalRedis'], rmem(x)==2))
+solver.add_hard(smt.g_ifalive(x, smt.types['Lb'], rmem(x)==1))
+solver.add_hard(smt.g_ifalive(x, smt.types['OpenStackHuge'], vmem(x)==8))
+solver.add_hard(smt.g_ifalive(x, smt.types['OpenStackLarge'], vmem(x)==4))
+
+
+solver.add_hard(And(smt.g_ifalive(y, smt.types['Vm'], vmem(y) >= smt.g_sum(x, smt.types['Deployable'], rmem, deploy(x)==y))))
+
+#context rule
+solver.add_hard(And(smt.g_ifalive(x, Web, Implies(fast(x), typeof(hp(x))==FastCH) )))
+solver.add_hard(And(smt.g_ifalive(x, Web, Implies(pollution(x), smt.g_exist([(y, Pollution)], And(typeof(y)==Pollution, sdb(y)==db(hp(x))))))))
+
+solver.add_hard(And(smt.g_ifalive_exists(x, Web, noise(x), y, Noise, sdb(y)==db(hp(x)))))
+
+#eclusive sensor for FastCH
+expr = smt.g_forall([(y, Sensor), (z, Sensor)], Implies(And(sdb(y)==db(x), sdb(z)==db(x)), y==z))
+solver.add_hard(And(smt.g_ifalive(x, FastCH, expr)))
+
+for i in smt.insts.itervalues():
+    if (not str(i).startswith('web00')) and str(i)!='null':
+        solver.add_soft(Not(smt.alive(i)), 10)
+cdriver.init_fixed_soft(solver)
+
+
+
+
+do_search(solver)
+
+painter.eval = solver.model().eval
+
+print solver.get_broken()
+print solver.get_broken_weight()
+cloudml.meval = solver.model().eval
+print cloudml.generate_instances()
+painter.make_graph()
+
+
+for i in range(0,100):
+    try:
+        cdriver.start_over(solver)
+        for cst, weight, perm in console_input():
+            solver.add_soft(eval(cst), weight)
+            if perm:
+                cdriver.add_fixed_soft(eval(cst), weight)
+            #print eval(cst)
+        #print "which zero: %s" % [x for x in solver.soft if x[1] == 0]
+        do_search(solver)
+        print solver.get_broken()
+        for i in smt.insts.itervalues():
+            if str(i).startswith('web') and str(solver.model().eval(alive(i)))=='True':
+                print 'Port of %s: %s' % (i, solver.model().eval(port(i)))
+        meval = solver.model().eval
+        painter.eval = meval
+        cloudml.meval = meval
+        print cloudml.generate_instances()
+        painter.make_graph()
+    except:
+        print "Unexpected error:", sys.exc_info()
+
+
+
+
+
+
+
+
+
 
