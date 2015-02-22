@@ -1,5 +1,5 @@
 from z3 import *
-
+import random
 import itertools
 
 downcasefirst = lambda s: s[:1].lower() + s[1:] if s else ''
@@ -281,7 +281,7 @@ class ModelSMT:
             tosubs = []
             for i, (inst, types) in enumerate(inst_types):
                 tosubs.append((inst, self.insts[relevant[i]]))
-            print "Here is the one to sub: %s" % tosubs
+            #print "Here is the one to sub: %s" % tosubs
             result.append(substitute(expr, *tosubs))    
         return result
     
@@ -309,12 +309,57 @@ class ModelSMT:
         return Sum(self.g_prpg(inst, type, new_expr))
     
     def g_ifalive_exists(self, ifinst, iftype, ifexp, exinst, extype, expr):
-        new_expr = self.g_exist([(exinst, extype)], And(self.typeof(exinst)==extype, expr))
+        clses = self.children_leaf_classes[str(extype)]
+        exact_type = _Or([self.typeof(exinst)==self.types[cls] for cls in clses])
+        new_expr = self.g_exist([(exinst, extype)], And(exact_type, expr))
         return self.g_ifalive(ifinst, iftype, Implies(ifexp, new_expr))
    
    
-   
-   
+class Diversifyer():
+    def __init__(self, smt, cdriver):
+        self.smt = smt
+        self.cd = smt.cd
+        self.repo = []  
+        self.cdriver = cdriver 
+    def add_repo(self, type):
+        self.repo.append( type )
+        
+    def diversify_grow(self, meval, size = 1):
+        smt = self.smt
+        alive = self.smt.alive
+        typeof = self.smt.typeof
+        csts = []
+        for type in self.repo:
+            insts = self.smt.get_potential_instances(type)
+            xtypes = [smt.types[t] for t in smt.children_leaf_classes[type]]
+            for i in range(0, 10):
+                inst = random.choice(list(insts))
+                xinst = smt.insts[inst]
+                count = 0
+                if str(meval(alive(xinst)))=='False':
+                    csts.append(typeof(xinst) == random.choice(xtypes))
+                    count += 1
+                    if count >= size:
+                        break
+        print csts
+        return csts
+    
+    def diversify_grow_run(self, solver):      
+        self.cdriver.start_over(solver)
+        csts = []
+        for i in range(0,5):
+            csts += self.diversify_grow(solver.model().eval)
+        for cst in csts:
+            solver.add_soft(cst, 300)
+            #self.cdriver.add_fix
+        solver.init_solver()
+    
+        print "diversifying..."        
+        (result, time) = solver.search_with_timing()
+        print '%s: %.4f'%(result,time)            
+            
+            
+            
 class ChangeDriver():
     def __init__(self, smt, fixed_soft = []):
         self.smt = smt

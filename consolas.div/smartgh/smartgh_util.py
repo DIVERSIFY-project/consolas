@@ -16,8 +16,10 @@ def console_input(monitor = None):
         perm = False
         s = raw_input('(constraint [!] [ | weight ]) | go | quit>>')
         if s == 'quit' or s == 'q':
-            quit()
-        if s == 'go':
+            return 'quit'
+        elif s == 'diversify grow':
+            return s
+        elif s == 'go':
             break
         if '|' in s:
             conswei = s.split('|')            
@@ -31,3 +33,5 @@ def console_input(monitor = None):
         result.append((conswei[0], int(conswei[1].strip()), perm))
     print result
     return result
+
+    
