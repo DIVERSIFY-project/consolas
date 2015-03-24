@@ -235,12 +235,16 @@ class ModelSMT:
                           "Relevant int attributes"
                           )
     def g_istypeof(self, inst, cls):
+        
         declared_type = self.declared_type[str(inst)]
         if cls in set([declared_type]) | self.indirect_super_class[declared_type]:
             return True
         possible = self.children_leaf_classes[self.declared_type[str(inst)]]
         leaf_cls = self.children_leaf_classes[cls]
-        return _Or([self.typeof(self.insts[inst])==self.types[y] for y in possible & leaf_cls])        
+        return _Or([self.typeof(self.insts[inst])==self.types[y] for y in possible & leaf_cls])  
+    
+    def g_istypeof_x(self, xinst, cls):
+        return _Or([self.typeof(xinst)==self.types[c] for c in self.children_leaf_classes[cls] ])      
     
     def g_type_dep(self, fun, fromcls, tocls):
         result = []
@@ -347,7 +351,7 @@ class Diversifyer():
     def diversify_grow_run(self, solver):      
         self.cdriver.start_over(solver)
         csts = []
-        for i in range(0,5):
+        for i in range(0,3):
             csts += self.diversify_grow(solver.model().eval)
         for cst in csts:
             solver.add_soft(cst, 300)
@@ -388,6 +392,9 @@ class ChangeDriver():
             relev = None
             if property == 'alive':
                 fun = self.smt.alive
+                relev = set(self.smt.insts.keys()) - set(['null'])
+            elif property == 'typeof':
+                fun = self.smt.typeof
                 relev = set(self.smt.insts.keys()) - set(['null'])
             else:
                 fun = self.smt.funcs[property]

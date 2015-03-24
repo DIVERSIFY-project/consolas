@@ -109,9 +109,6 @@ alive = smt.alive
 _i = lambda name : smt.insts[name]
 web = smt.insts['web00']
 web1 = smt.insts['web01']
-fast = smt.funcs['fast']
-pollution = smt.funcs['pollution']
-noise = smt.funcs['noise']
 port = smt.funcs['port']
 hopper00 = smt.insts['hopper00']
 hopper01 = smt.insts['hopper01']
@@ -129,10 +126,12 @@ hopper03 = smt.insts['hopper03']
 painter = ModelPainter(smt)
 
 cdriver = ChangeDriver(smt)
-cdriver.add_monitored('deploy', 10)
-cdriver.add_monitored('alive', (x, If(alive(x), 1, 30)))
-cdriver.add_monitored('db', 10)
-cdriver.add_monitored('sdb', 10)
+cdriver.add_monitored('deploy', (x, rmem(x)*2))
+cdriver.add_monitored('alive', (x, If(alive(x), 1, If(smt.g_istypeof_x(x, 'Vm'), vmem(x), 10))))
+cdriver.add_monitored('db', 2)
+cdriver.add_monitored('sdb', 2)
+cdriver.add_monitored('hp', 3)
+cdriver.add_monitored('typeof', 20)
 
 cloudml = CloudML(smt)
 cloudml.attr = ['port']
@@ -191,7 +190,7 @@ solver.add_hard(smt.g_ifalive(x, _t('LowCostSH'), rmem(x)==1))
 solver.add_hard(smt.g_ifalive(x, _t('FastSH'), rmem(x)==2))
 solver.add_hard(smt.g_ifalive(x, _t('LowCostCH'), rmem(x)==2))
 solver.add_hard(smt.g_ifalive(x, _t('FastCH'), rmem(x)==3))
-solver.add_hard(smt.g_ifalive(x, _t('StandardCH'), rmem(x)==5))
+solver.add_hard(smt.g_ifalive(x, _t('NormalCH'), rmem(x)==5))
 solver.add_hard(smt.g_ifalive(x, _t('FullHopper'), rmem(x)==6))
 
 solver.add_hard(smt.g_ifalive(x, _t('Sensor'), rmem(x)==1))
@@ -220,7 +219,15 @@ for i in smt.insts.itervalues():
     if (not str(i).startswith('web00')) and str(i)!='null':
         solver.add_soft(Not(smt.alive(i)), 10)
 
+(noise, pollution, fast, driving, walk, free) = Bools(['noise','pollution', 'fast', 'driving', 'walk', 'free'])
+fsoft = lambda expr: cdriver.add_fixed_soft(expr, 300)
 
+fsoft(Implies(noise, smt.g_exist([(x, _t('NoiseSensor'))], And([alive(sdb(x)), typeof(x)==_t('NoiseSensor'), sdb(x)==db(hp(theweb))])))) 
+fsoft(Implies(pollution, smt.g_exist([(x, _t('PollutionSensor'))], And([alive(sdb(x)), typeof(x)==_t('NoiseSensor'), sdb(x)==db(hp(theweb))])))) 
+fsoft(Implies(fast, smt.g_istypeof_x(hp(theweb), 'FastHopper')))
+fsoft(Implies(driving, Or(smt.g_istypeof_x(hp(theweb), 'CarHopper'), typeof(hp(theweb))==_t('FullHopper'))))
+fsoft(Implies(free, And(typeof(deploy(hp(theweb)))==_t('EC2Free'), typeof(deploy(theweb))==_t('EC2Free'))))
+fsoft(Implies(walk, Not(smt.g_istypeof_x(hp(theweb), 'CarHopper'))))
 
 do_search(solver)
 
@@ -254,9 +261,11 @@ for i in range(0,100):
         meval = solver.model().eval
         painter.eval = meval
         cloudml.meval = meval
-        print cloudml.generate_instances()
+        #print cloudml.generate_instances()
+        print solver.soft
         print 'Total cost: %d, %s' %(solver.get_broken_weight(),solver.get_broken())
         #print meval()
+        print 'the web is %s' % (web for web in smt.insts if web==theweb)
         painter.make_graph()
     #except:
         s = str(sys.exc_info())

@@ -25,7 +25,9 @@ class SoftSolverMsOpt(SoftSolver):
         for cst in self.hard:
             self.solver.add(cst)
         for i, (cst, wt) in enumerate(self.soft):
-            self.solver.add_soft(cst, wt)
+            if wt == 0: rwt =1
+            else: rwt = wt
+            self.solver.add_soft(cst, rwt)
             #print self.solver.v
         
       

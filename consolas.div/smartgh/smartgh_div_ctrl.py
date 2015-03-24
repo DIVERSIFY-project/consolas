@@ -51,14 +51,14 @@ cd.define_attr_bool('cheap', 'Web')
 
 smt = ModelSMT(cd)
 
-smt.maxinst["Vm"] = 3
-smt.maxinst["OpenStackHuge"] = 1
-smt.maxinst["FastCH"] = 1
-smt.maxinst['Hopper'] = 4
-smt.maxinst["PaaSRedis"] = 2
-smt.maxinst["LocalRedis"] = 3
-smt.maxinst["Web"] = 5
-smt.maxinst['Sensor']=3
+smt.maxinst["OpenStackLarge"] = 3
+smt.maxinst["OpenStackHuge"] = 3
+#smt.maxinst["FastCH"] = 1
+smt.maxinst['Hopper'] = 6
+#smt.maxinst["PaaSRedis"] = 3
+smt.maxinst["LocalRedis"] = 6
+smt.maxinst["Web"] = 6
+smt.maxinst['Sensor']=6
 smt.maxinst['Lb'] = 1
 
 
@@ -83,7 +83,6 @@ FootHopper = smt.types['FootHopper']
 Hopper = smt.types['Hopper']
 CarHopper = smt.types['CarHopper']
 FastCH = smt.types['FastCH']
-NormalCH = smt.types['NormalCH']
 PaaSRedis = smt.types['PaaSRedis']
 LocalRedis = smt.types['LocalRedis']
 Web = smt.types['Web']
@@ -94,8 +93,6 @@ typeof = smt.typeof
 alive = smt.alive
 web = smt.insts['web00']
 web1 = smt.insts['web01']
-web00 = smt.insts['web00']
-web01 = smt.insts['web01']
 fast = smt.funcs['fast']
 pollution = smt.funcs['pollution']
 noise = smt.funcs['noise']
@@ -186,8 +183,7 @@ print '=======%s' % exp
 solver.add_hard(exp)
 solver.add_hard(And(smt.g_ifalive(x, CarHopper, smt.g_exist([(y, Sensor)], sdb(y) == db(x)))))
 
-solver.add_hard(smt.g_ifalive(x, smt.types['FastCH'], smt.g_exist([(y, smt.types['Sensor'])], db(x)==sdb(y))))                
-solver.add_hard(smt.g_ifalive(x, smt.types['Web'], rmem(x)==1))
+#solver.add_hard(smt.g_ifalive(x, smt.types['FastCH'], smt.g_exist([(y, smt.types['Sensor'])], db(x)==sdb(y))))                
 solver.add_hard(smt.g_ifalive(x, smt.types['FootHopper'], rmem(x)==1))
 solver.add_hard(smt.g_ifalive(x, smt.types['CarHopper'], rmem(x)==2))
 solver.add_hard(smt.g_ifalive(x, smt.types['Sensor'], rmem(x)==1))
@@ -231,23 +227,12 @@ print cloudml.generate_instances()
 painter.make_graph()
 
 
-for i in range(0,100):
-    #try:
+for i in range(0,5):
+    try:
         cdriver.start_over(solver)
-        command = console_input()
-        if command == 'quit':
-            quit()
-        elif command == 'diversify grow':
-            #for n in range(0,3):
-            diversifyer.diversify_grow_run(solver)
-        else:
-            for cst, weight, perm in command:
-                solver.add_soft(eval(cst), weight)
-                if perm:
-                    cdriver.add_fixed_soft(eval(cst), weight)
-            #print eval(cst)
-        #print "which zero: %s" % [x for x in solver.soft if x[1] == 0]
-            do_search(solver)
+        #diversifyer.
+        diversifyer.diversify_grow_run(solver)
+        
         
         meval = solver.model().eval
         painter.eval = meval
@@ -256,7 +241,7 @@ for i in range(0,100):
         print 'Total cost: %d, %s' %(solver.get_broken_weight(),solver.get_broken())
         #print meval()
         painter.make_graph()
-    #except:
+    except:
         s = str(sys.exc_info())
         print "Unexpected error:%s" % s
         if 'on closed file' in s:
