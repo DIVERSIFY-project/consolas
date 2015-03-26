@@ -19,6 +19,8 @@ def console_input(monitor = None):
             return 'quit'
         elif s == 'diversify grow':
             return s
+        elif s == 'simple grow':
+            return s
         elif s == 'go':
             break
         if '|' in s:

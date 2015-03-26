@@ -361,7 +361,22 @@ class Diversifyer():
         print "diversifying..."        
         (result, time) = solver.search_with_timing()
         print '%s: %.4f'%(result,time)            
-            
+    
+    def simple_grow_run(self, solver, meval, size=1):
+        hoppers = [i for i in self.smt.insts.itervalues() if str(i).startswith('hopper') or str(i).startswith('sensor')]
+        if len(hoppers)<size:
+            return
+        try:
+            for h in random.sample(hoppers, size):
+                solver.add_soft(self.smt.alive(h), 300)
+                print "===>%s" % h
+        except:
+            print "no enough left"
+            return
+        solver.init_solver()
+        print 'growing...'
+        (result, time) = solver.search_with_timing()
+        print '%s: %.4f'%(result,time)   
             
             
 class ChangeDriver():
@@ -383,9 +398,11 @@ class ChangeDriver():
     
     def add_monitored(self, property, weight):
         self.monitored.append((property, weight))
-    
+        
     def start_over(self, solver):
-        meval = solver.model().eval
+        return self.start_over_meval(solver, solver.model().eval)
+    
+    def start_over_meval(self, solver, meval):
         self.new_soft = []
         for property, weight in self.monitored:
             fun = None

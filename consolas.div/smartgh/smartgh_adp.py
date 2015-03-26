@@ -16,7 +16,7 @@ cd.define_class("Deployable")
 
 cd.define_class("Web", ['Deployable'])
 cd.define_class("FastWeb",['Web'])
-cd.define_class("LowResoWeb", ['Web'])
+cd.define_class("LowResWeb", ['Web'])
 
 cd.define_class("Lb", ['Deployable'])
         
@@ -50,19 +50,18 @@ cd.define_ref('hp', 'Web', 'Hopper', True)
 cd.define_ref('sdb', 'Sensor', 'Redis', True)
 cd.define_ref('lb', 'Web', 'Lb', False)
 
-cd.define_attr_int('vmem', 'Vm', 1, 16)
+cd.define_attr_int('vmem', 'Vm', 1, 40)
 cd.define_attr_int('rmem', 'Deployable', 0, 5)
 cd.define_attr_int('port', 'Web', 8081, 8089)
 
 smt = ModelSMT(cd)
 
 smt.maxinst["Vm"] = 3
-smt.maxinst["OpenStackHuge"] = 1
 #smt.maxinst["FastCH"] = 1
-smt.maxinst['Hopper'] = 6
+smt.maxinst['Hopper'] = 8
 #smt.maxinst["PaaSRedis"] = 2
-smt.maxinst["Redis"] = 4
-smt.maxinst["Web"] = 6
+smt.maxinst["Redis"] = 3
+smt.maxinst["Web"] = 8
 smt.maxinst['Sensor']=3
 smt.maxinst['Lb'] = 1
 
@@ -127,7 +126,7 @@ painter = ModelPainter(smt)
 
 cdriver = ChangeDriver(smt)
 cdriver.add_monitored('deploy', (x, rmem(x)*2))
-cdriver.add_monitored('alive', (x, If(alive(x), 1, If(smt.g_istypeof_x(x, 'Vm'), vmem(x), 10))))
+cdriver.add_monitored('alive', (x, If(alive(x), 5, 10)))
 cdriver.add_monitored('db', 2)
 cdriver.add_monitored('sdb', 2)
 cdriver.add_monitored('hp', 3)
@@ -145,6 +144,8 @@ cloudml.external = ['PaaSRedis']
 diversifyer = Diversifyer(smt, cdriver)
 diversifyer.add_repo('Hopper')
 diversifyer.add_repo('Sensor')
+diversifyer.add_repo('Web')
+diversifyer.add_repo('Vm')
 #end of auxiliary
 
 '''
@@ -158,7 +159,7 @@ for cst, comment in smt.hard_const:
 
 
 #At least one web by default    
-solver.add_soft(smt.alive(web), 1000)
+#solver.add_soft(smt.alive(web), 1000)
 
 #CarHopper prefers LocalRedis
 for cst in smt.g_type_dep("db", ["CarHopper"], ["LocalRedis"]):
@@ -199,7 +200,7 @@ solver.add_hard(smt.g_ifalive(x, _t('Lb'), rmem(x)==1))
 
 solver.add_hard(smt.g_ifalive(x, _t('EC2'), vmem(x)==8))
 solver.add_hard(smt.g_ifalive(x, _t('EC2Free'), vmem(x)==4))
-solver.add_hard(smt.g_ifalive(x, smt.types['OpenStack'], vmem(x)==16))
+solver.add_hard(smt.g_ifalive(x, smt.types['OpenStack'], vmem(x)==32))
 
 
 solver.add_hard(And(smt.g_ifalive(y, smt.types['Vm'], vmem(y) >= smt.g_sum(x, smt.types['Deployable'], rmem, deploy(x)==y))))
@@ -219,15 +220,28 @@ for i in smt.insts.itervalues():
     if (not str(i).startswith('web00')) and str(i)!='null':
         solver.add_soft(Not(smt.alive(i)), 10)
 
-(noise, pollution, fast, driving, walk, free) = Bools(['noise','pollution', 'fast', 'driving', 'walk', 'free'])
+(noise, pollution, fast, driving, walk, free, private, exfast, stable) = Bools(['noise','pollution', 'fast', 'driving', 'walk', 'free', 'private', 'exfast', 'stable'])
 fsoft = lambda expr: cdriver.add_fixed_soft(expr, 300)
 
 fsoft(Implies(noise, smt.g_exist([(x, _t('NoiseSensor'))], And([alive(sdb(x)), typeof(x)==_t('NoiseSensor'), sdb(x)==db(hp(theweb))])))) 
-fsoft(Implies(pollution, smt.g_exist([(x, _t('PollutionSensor'))], And([alive(sdb(x)), typeof(x)==_t('NoiseSensor'), sdb(x)==db(hp(theweb))])))) 
+fsoft(Implies(pollution, smt.g_exist([(x, _t('PollutionSensor'))], And([alive(sdb(x)), typeof(x)==_t('PollutionSensor'), sdb(x)==db(hp(theweb))])))) 
 fsoft(Implies(fast, smt.g_istypeof_x(hp(theweb), 'FastHopper')))
 fsoft(Implies(driving, Or(smt.g_istypeof_x(hp(theweb), 'CarHopper'), typeof(hp(theweb))==_t('FullHopper'))))
 fsoft(Implies(free, And(typeof(deploy(hp(theweb)))==_t('EC2Free'), typeof(deploy(theweb))==_t('EC2Free'))))
-fsoft(Implies(walk, Not(smt.g_istypeof_x(hp(theweb), 'CarHopper'))))
+fsoft(Implies(walk, And(Not(smt.g_istypeof_x(hp(theweb), 'CarHopper')), typeof(theweb)==_t('LowResWeb'))))
+fsoft(Implies(private, And(typeof(deploy(hp(theweb)))==_t('OpenStack'), typeof(deploy(db(hp(theweb))))==_t('OpenStack'))))
+fsoft(Implies(exfast, And([fast, deploy(theweb)==deploy(hp(theweb)), Implies(alive(db(hp(theweb))), deploy(db(hp(theweb)))==deploy(theweb)) ])))
+
+def prefered_type(cls):
+    for cst in smt.g_prpg(x, _t(cls), Implies(alive(x), typeof(x)==_t(cls))):
+        cdriver.add_fixed_soft(cst, 1)
+        solver.add_soft(cst,1)
+
+prefered_type('LowCostSH')
+prefered_type('EC2Free')
+prefered_type('FastWeb')
+prefered_type('NoiseSensor')
+prefered_type('PaaSRedis')
 
 do_search(solver)
 
@@ -236,8 +250,91 @@ painter.eval = solver.model().eval
 print solver.get_broken()
 print solver.get_broken_weight()
 cloudml.meval = solver.model().eval
-print cloudml.generate_instances()
 painter.make_graph()
+
+
+
+resfile = open('result', 'w')
+abstypes = ['hopper', 'hopper', 'sensor']
+contexts = [
+            [noise], [pollution], [fast], [driving], [walk], [free], [private], [exfast],
+            [noise, fast], [noise, driving], [pollution, walk], [pollution, free], [noise, private], [noise, exfast], [noise, stable],
+            [noise, fast, private], [noise, walk, free], [noise, driving, free], [pollution, walk, stable], [pollution, driving, private],
+            [driving, fast, free], [driving, exfast],  [walk, exfast, stable]
+           ]
+
+init_meval = solver.model().eval
+def grow(solver, wakeup, wakeup_type, onlyhopper=False):
+    avail_types = { 
+                   'hopper' : ['FastCH', 'LowCostCH', 'NormalCH', 'LowCostSH', 'FastSH', 'FullHopper'],
+                   'web' : ['FastWeb', 'LowResWeb'],
+                   'vm' : ['EC2', 'EC2Free', 'OpenStack'],
+                   'sensor' : ['NoiseSensor', 'PollutionSensor'],
+                   'redis' : ['PaaSRedis', 'LocalRedis']
+                   }
+    cdriver.start_over_meval(solver, init_meval)
+    if onlyhopper:
+        towakeup = random.sample([item for item in smt.insts.itervalues() if str(item).startswith('hopper')], wakeup)
+    else:
+        towakeup = random.sample([item for item in smt.insts.itervalues() if str(item)!='null' and not str(item).startswith('lb')], wakeup)
+    for inst in towakeup:
+        solver.add_soft(smt.alive(inst), 300)
+        if wakeup_type>0:
+            solver.add_soft(smt.typeof(inst)==_t(random.choice(avail_types[str(inst)[:-2]])), 300)
+            wakeup_type -= 1
+    #print solver.soft
+    print 'growing...'
+    do_search(solver)
+    #print solver.get_broken()
+    
+# grow(solver, 8, 0, True)
+# painter.eval=solver.model().eval
+# painter.make_graph()
+
+try:
+    for i in range(2, 33):
+        for j in range(0, i+1):
+            print "------------------%d:%d----------------------"%(i,j)
+            real_i = i
+            try:
+                if i > 25 and j <= i-25:
+                    real_i = i-25
+                    grow(solver, i-25, j, True)
+                elif i < 25:
+                    grow(solver, i, j, False)
+                else:
+                    continue
+            except:
+                continue
+            
+            resfile = open('result', 'a')
+            meval = solver.model().eval
+            #painter.eval = meval
+            (size, shannon) = painter._shannon_without_show(solver.model().eval)
+            resfile.write('%d,%d,%s,%.4f,'%(real_i,j, size, shannon));
+            #painter.make_graph()
+            costs = []
+            for ctx in contexts:
+                print ctx
+                cdriver.start_over_meval(solver, meval)
+                
+                for predicate in ctx:
+                    solver.add_soft(predicate, 100)
+                do_search(solver)
+                cost = solver.get_broken_weight()
+                resfile.write("%i,"%cost)
+                costs.append(cost)
+                print 'Total cost: %d, %s' %(solver.get_broken_weight(),solver.get_broken())
+                #painter.eval = solver.model().eval
+                #painter.make_graph()
+            resfile.write("%.4f\n"%(sum(costs)*1.0 / len(costs)))
+            
+            resfile.close()
+finally:
+    resfile.close()
+
+
+quit()
 
 
 for i in range(0,100):
@@ -249,6 +346,8 @@ for i in range(0,100):
         elif command == 'diversify grow':
             #for n in range(0,3):
             diversifyer.diversify_grow_run(solver)
+        elif command == 'simple grow':
+            diversifyer.simple_grow_run(solver, solver.model().eval, 'hopper', 4)            
         else:
             for cst, weight, perm in command:
                 solver.add_soft(eval(cst), weight)
@@ -262,7 +361,7 @@ for i in range(0,100):
         painter.eval = meval
         cloudml.meval = meval
         #print cloudml.generate_instances()
-        print solver.soft
+        #print solver.soft
         print 'Total cost: %d, %s' %(solver.get_broken_weight(),solver.get_broken())
         #print meval()
         print 'the web is %s' % (web for web in smt.insts if web==theweb)
