@@ -126,11 +126,11 @@ painter = ModelPainter(smt)
 
 cdriver = ChangeDriver(smt)
 cdriver.add_monitored('deploy', (x, rmem(x)*2))
-cdriver.add_monitored('alive', (x, If(alive(x), 5, 10)))
+cdriver.add_monitored('alive', (x, If(alive(x), 3, 10)))
 cdriver.add_monitored('db', 2)
 cdriver.add_monitored('sdb', 2)
-cdriver.add_monitored('hp', 3)
-cdriver.add_monitored('typeof', 20)
+cdriver.add_monitored('hp', 1)
+cdriver.add_monitored('typeof', 10)
 
 cloudml = CloudML(smt)
 cloudml.attr = ['port']
@@ -162,9 +162,9 @@ for cst, comment in smt.hard_const:
 #solver.add_soft(smt.alive(web), 1000)
 
 #CarHopper prefers LocalRedis
-for cst in smt.g_type_dep("db", ["CarHopper"], ["LocalRedis"]):
-    solver.add_soft(cst, 100)
-    #solver.add_hard(cst)     
+#for cst in smt.g_type_dep("db", ["CarHopper"], ["LocalRedis"]):
+    #solver.add_soft(cst, 100)
+#    solver.add_hard(cst)     
 
 
 # distinguised hopper: each web
@@ -229,8 +229,9 @@ fsoft(Implies(fast, smt.g_istypeof_x(hp(theweb), 'FastHopper')))
 fsoft(Implies(driving, Or(smt.g_istypeof_x(hp(theweb), 'CarHopper'), typeof(hp(theweb))==_t('FullHopper'))))
 fsoft(Implies(free, And(typeof(deploy(hp(theweb)))==_t('EC2Free'), typeof(deploy(theweb))==_t('EC2Free'))))
 fsoft(Implies(walk, And(Not(smt.g_istypeof_x(hp(theweb), 'CarHopper')), typeof(theweb)==_t('LowResWeb'))))
-fsoft(Implies(private, And(typeof(deploy(hp(theweb)))==_t('OpenStack'), typeof(deploy(db(hp(theweb))))==_t('OpenStack'))))
+fsoft(Implies(private, And(typeof(deploy(hp(theweb)))==_t('OpenStack'),typeof(db(hp(theweb)))==_t('LocalRedis'))))
 fsoft(Implies(exfast, And([fast, deploy(theweb)==deploy(hp(theweb)), Implies(alive(db(hp(theweb))), deploy(db(hp(theweb)))==deploy(theweb)) ])))
+
 
 def prefered_type(cls):
     for cst in smt.g_prpg(x, _t(cls), Implies(alive(x), typeof(x)==_t(cls))):
@@ -241,7 +242,7 @@ prefered_type('LowCostSH')
 prefered_type('EC2Free')
 prefered_type('FastWeb')
 prefered_type('NoiseSensor')
-prefered_type('PaaSRedis')
+prefered_type('LocalRedis')
 
 do_search(solver)
 
@@ -258,9 +259,9 @@ resfile = open('result', 'w')
 abstypes = ['hopper', 'hopper', 'sensor']
 contexts = [
             [noise], [pollution], [fast], [driving], [walk], [free], [private], [exfast],
-            [noise, fast], [noise, driving], [pollution, walk], [pollution, free], [noise, private], [noise, exfast], [noise, stable],
-            [noise, fast, private], [noise, walk, free], [noise, driving, free], [pollution, walk, stable], [pollution, driving, private],
-            [driving, fast, free], [driving, exfast],  [walk, exfast, stable]
+            [noise, fast], [noise, driving], [pollution, walk], [pollution, free], [noise, private], [noise, exfast],
+            [noise, fast, private], [noise, walk, free], [noise, driving, free], [pollution, driving, private],
+            [driving, fast, free],  [walk, exfast, private]
            ]
 
 init_meval = solver.model().eval
@@ -292,21 +293,21 @@ def grow(solver, wakeup, wakeup_type, onlyhopper=False):
 # painter.make_graph()
 
 try:
-    for i in range(2, 33):
+    for i in range(11, 32):
         for j in range(0, i+1):
             print "------------------%d:%d----------------------"%(i,j)
             real_i = i
             try:
-                if i > 25 and j <= i-25:
-                    real_i = i-25
-                    grow(solver, i-25, j, True)
-                elif i < 25:
+                if i > 24 and j <= i-24:
+                    real_i = i-24
+                    grow(solver, i-24, j, True)
+                elif i < 24:
                     grow(solver, i, j, False)
                 else:
                     continue
             except:
                 continue
-            
+             
             resfile = open('result', 'a')
             meval = solver.model().eval
             #painter.eval = meval
@@ -317,7 +318,7 @@ try:
             for ctx in contexts:
                 print ctx
                 cdriver.start_over_meval(solver, meval)
-                
+                 
                 for predicate in ctx:
                     solver.add_soft(predicate, 100)
                 do_search(solver)
@@ -328,12 +329,12 @@ try:
                 #painter.eval = solver.model().eval
                 #painter.make_graph()
             resfile.write("%.4f\n"%(sum(costs)*1.0 / len(costs)))
-            
+             
             resfile.close()
 finally:
     resfile.close()
-
-
+ 
+ 
 quit()
 
 
