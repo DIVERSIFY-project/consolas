@@ -288,9 +288,11 @@ def grow(solver, wakeup, wakeup_type, onlyhopper=False):
     do_search(solver)
     #print solver.get_broken()
     
-# grow(solver, 8, 0, True)
-# painter.eval=solver.model().eval
-# painter.make_graph()
+#grow(solver, 12, 12)
+#painter.eval=solver.model().eval
+#painter.make_graph()
+#
+#quit()
 
 try:
     for i in range(11, 32):
