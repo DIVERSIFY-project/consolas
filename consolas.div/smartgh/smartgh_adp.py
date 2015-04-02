@@ -288,7 +288,7 @@ def grow(solver, wakeup, wakeup_type, onlyhopper=False):
     do_search(solver)
     #print solver.get_broken()
     
-#grow(solver, 12, 12)
+#grow(solver, 12, 0, False)
 #painter.eval=solver.model().eval
 #painter.make_graph()
 #
