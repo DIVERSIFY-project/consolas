@@ -42,6 +42,7 @@ cd.define_ref('lb', 'Web', 'Lb', False)
 cd.define_attr_int('vmem', 'Vm', 1, 10)
 cd.define_attr_int('rmem', 'Deployable', 0, 5)
 cd.define_attr_int('port', 'Web', 8081, 8089)
+cd.define_attr_int('hport', 'Hopper', 8090, 8099)
 
 cd.define_attr_bool('fast', 'Web')
 cd.define_attr_bool('noise', 'Web')
@@ -100,6 +101,7 @@ fast = smt.funcs['fast']
 pollution = smt.funcs['pollution']
 noise = smt.funcs['noise']
 port = smt.funcs['port']
+hport = smt.funcs['hport']
 hopper00 = smt.insts['hopper00']
 hopper01 = smt.insts['hopper01']
 hopper02 = smt.insts['hopper02']
@@ -109,7 +111,8 @@ EC2 = smt.types['EC2']
 OpenStackHuge = smt.types['OpenStackHuge']
 #shorthands end here
 
-
+_t = lambda name : smt.types[name]
+_i = lambda name : smt.insts[name]
 #auxiliary objects to display the result (painter), monitor change (cdriver), 
 #and generate CloudML scripts
 
@@ -122,13 +125,14 @@ cdriver.add_monitored('db', 10)
 cdriver.add_monitored('sdb', 10)
 
 cloudml = CloudML(smt)
-cloudml.attr = ['port']
+cloudml.attr = ['port', 'hport']
 cloudml.host = [('deploy', 'ubuntuReq', 'ubuntuPrv')]
 cloudml.relation = [('db', 'redisReq', 'redisPrv'), ('sdb', 'redisReq', 'redisPrv'), ('hp', 'hopperReq', 'hopperPrv')]
 cloudml.rev_relation = [('lb', 'lbReq', 'webPrv')]
 cloudml.vm = ['Vm']
 cloudml.internal = ['Deployable']
 cloudml.external = ['PaaSRedis']
+cloudml.tags={'FastCH':'fast', 'NormalCH':'car', 'FootHopper':'foot', 'BasicHopper':'default'}
 
 diversifyer = Diversifyer(smt, cdriver)
 diversifyer.add_repo('Hopper')
@@ -173,8 +177,8 @@ for cst in smt.g_type_dep("db", ["CarHopper"], ["LocalRedis"]):
 solver.add_hard(smt.g_forall([(x, Web), (y, Web)], Implies(And([alive(x), alive(y), port(x)==port(y)]), x==y))) 
 # more than one web? call a load balance!
 solver.add_hard(smt.g_forall([(x, Web), (y, Web)], Implies(And([alive(x), alive(y), x!=y]), And(alive(lb(x)), alive(lb(y))))))       
-# Two hoppers cannot be deployed on the same node
-solver.add_hard(smt.g_forall([(x,Hopper), (y, Hopper)], Implies(And([alive(x), alive(y), deploy(x)==deploy(y)]), x==y)))
+# Two hoppers cannot be deployed with the same port
+solver.add_hard(smt.g_forall([(x,Hopper), (y, Hopper)], Implies(And([alive(x), alive(y), hport(x)==hport(y)]), x==y)))
 # and two redis as well (because of the port)
 solver.add_hard(smt.g_forall([(x,LocalRedis), (y, LocalRedis)], Implies(And([alive(x), alive(y), deploy(x)==deploy(y)]), x==y)))
 #each hopper should be covered by a web

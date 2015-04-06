@@ -18,6 +18,7 @@ class CloudML:
         self.internal = []
         self.external = []    
         self.meval = None 
+        self.tags = dict()
         
     def generate_instances(self):
         meval = self.meval
@@ -32,10 +33,13 @@ class CloudML:
             properties = []
             for attr in self.attr:
                 xattr = self.smt.funcs[attr]
-                if type in self.cd.attr[attr]:
+                if type in self.smt.children_leaf_classes[self.cd.attr[attr][0]]:
                     properties.append('(\'%s\' : \'%s\')' % (attr, meval(xattr(xinst))))
+            htype = str(meval(smt.typeof(smt.funcs['hp'](xinst))))
+            if htype in self.tags:
+                properties.append('(\'%s\' : \'%s\')' % ('tag', self.tags[htype]))
             if len(properties)!=0:
-                line = '%s { properties: %s}' %(line, ", ".join(properties))
+                line = '%s { properties: %s}' %(line, " ".join(properties))
             lines.append(line)
          
         for host, fromport, toport in self.host:
